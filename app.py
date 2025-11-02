@@ -45,11 +45,12 @@ def predict():
     image_path = os.path.join(UPLOAD_FOLDER, image_file.filename)
     image_file.save(image_path)
 
-    # Read and preprocess image
-    img = cv2.imread(image_path)
-    img = cv2.resize(img, (224,224))
-    img = img / 255.0
-    img = np.expand_dims(img, axis=0)
+    # Read and preprocess image correctly for your model
+    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)  # Read as grayscale
+    img = cv2.resize(img, (48, 48))                     # Resize to 48x48
+    img = img / 255.0                                   # Normalize
+    img = np.expand_dims(img, axis=-1)                  # Add channel dimension
+    img = np.expand_dims(img, axis=0)                   # Add batch dimension
 
     # Predict emotion
     predictions = model.predict(img)
