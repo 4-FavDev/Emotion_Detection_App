@@ -4,6 +4,8 @@ import numpy as np
 import cv2
 import os
 import sqlite3
+import uuid
+import gc  # For garbage collection
 
 app = Flask(__name__)
 
@@ -26,9 +28,6 @@ cursor.execute("""
 """)
 conn.commit()
 
-# Load the trained model at startup
-model = tf.keras.models.load_model("emotion_model.h5")
-
 # Hardcoded emotion labels
 labels = ['Angry','Disgust','Fear','Happy','Sad','Surprise','Neutral']
 
@@ -38,34 +37,53 @@ def home():
 
 @app.route('/predict', methods=['POST'])
 def predict():
-    name = request.form['name']
-    image_file = request.files['image']
+    try:
+        name = request.form['name']
+        image_file = request.files['image']
 
-    # Save uploaded image
-    image_path = os.path.join(UPLOAD_FOLDER, image_file.filename)
-    image_file.save(image_path)
+        # --- Clear old uploads ---
+        for filename in os.listdir(UPLOAD_FOLDER):
+            file_path = os.path.join(UPLOAD_FOLDER, filename)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
 
-    # Read and preprocess image correctly for your model
-    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)  # Read as grayscale
-    img = cv2.resize(img, (48, 48))                     # Resize to 48x48
-    img = img / 255.0                                   # Normalize
-    img = np.expand_dims(img, axis=-1)                  # Add channel dimension
-    img = np.expand_dims(img, axis=0)                   # Add batch dimension
+        # --- Save new image with unique filename ---
+        unique_filename = f"{uuid.uuid4().hex}_{image_file.filename}"
+        image_path = os.path.join(UPLOAD_FOLDER, unique_filename)
+        image_file.save(image_path)
 
-    # Predict emotion
-    predictions = model.predict(img)
-    class_index = np.argmax(predictions)
-    emotion = labels[class_index]
+        # --- Read and preprocess image ---
+        img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+        img = cv2.resize(img, (48, 48))
+        img = img / 255.0
+        img = np.expand_dims(img, axis=-1)
+        img = np.expand_dims(img, axis=0)
 
-    # Save to database
-    cursor.execute(
-        "INSERT INTO users (name, image_path, emotion) VALUES (?, ?, ?)",
-        (name, image_path, emotion)
-    )
-    conn.commit()
+        # --- Load model lazily to reduce memory usage ---
+        model = tf.keras.models.load_model("emotion_model.h5")
 
-    # Show result
-    return render_template('index.html', result=emotion, img=image_path)
+        # --- Predict emotion ---
+        predictions = model.predict(img)
+        class_index = np.argmax(predictions)
+        emotion = labels[class_index]
+
+        # --- Save to database ---
+        cursor.execute(
+            "INSERT INTO users (name, image_path, emotion) VALUES (?, ?, ?)",
+            (name, image_path, emotion)
+        )
+        conn.commit()
+
+        # --- Clean up model from memory ---
+        del model
+        gc.collect()
+
+        # --- Render result ---
+        return render_template('index.html', result=emotion, img=image_path)
+
+    except Exception as e:
+        # Show error instead of crashing
+        return f"An error occurred: {str(e)}"
 
 if __name__ == '__main__':
     app.run(debug=True)
